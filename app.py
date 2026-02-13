@@ -8,6 +8,8 @@ st.set_page_config(
     layout="wide",
 )
 
+
+
 import os
 import requests
 from typing import Any, Dict, List, Optional, Union
@@ -38,6 +40,8 @@ N8N_WEBHOOK_URL = get_config("N8N_WEBHOOK_URL")
 N8N_HEADER_NAME = get_config("N8N_HEADER_NAME", "X-API-KEY")
 N8N_HEADER_VALUE = get_config("N8N_HEADER_VALUE")
 
+st.write("DEBUG URL:", N8N_WEBHOOK_URL)
+st.write("DEBUG HEADER:", N8N_HEADER_NAME, N8N_HEADER_VALUE)
 
 # =====================================================
 # HELPERS
@@ -228,3 +232,4 @@ if run:
 
 else:
     st.info("Enter inputs and click Run Analysis.")
+
