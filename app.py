@@ -1,34 +1,22 @@
-import json
-import os
-from typing import Any, Dict, List, Optional, Union
-
-import requests
 import streamlit as st
+
+# MUST BE FIRST STREAMLIT COMMAND
+st.set_page_config(
+    page_title="Madison Market Insight",
+    layout="wide",
+)
+
+import os
+import requests
+from typing import Any, Dict, List, Optional, Union
 
 JsonType = Union[Dict[str, Any], List[Any]]
 
 # =====================================================
-# CONFIG LOADER (WORKS EVERYWHERE)
+# CONFIG (Railway / Render / Docker friendly)
 # =====================================================
 def get_config(key: str, default: Optional[str] = None) -> Optional[str]:
-    """
-    Universal config loader:
-    1) Railway / Render / Docker → env vars
-    2) Streamlit Cloud → st.secrets
-    3) Local dev → .env or system env
-    """
-    value = os.getenv(key)
-
-    if value:
-        return value
-
-    try:
-        if key in st.secrets:
-            return str(st.secrets[key])
-    except Exception:
-        pass
-
-    return default
+    return os.getenv(key, default)
 
 
 N8N_WEBHOOK_URL = get_config("N8N_WEBHOOK_URL")
@@ -40,7 +28,6 @@ N8N_HEADER_VALUE = get_config("N8N_HEADER_VALUE")
 # HELPERS
 # =====================================================
 def normalize_response(raw: JsonType) -> Dict[str, Any]:
-    """Normalize n8n response → dict"""
     if isinstance(raw, dict):
         return raw
     if isinstance(raw, list) and raw and isinstance(raw[0], dict):
@@ -53,7 +40,7 @@ def safe_str(x: Any) -> str:
 
 
 # =====================================================
-# CALL WORKFLOW
+# CALL N8N WORKFLOW
 # =====================================================
 def call_n8n(brand: str, goal: str) -> Dict[str, Any]:
     if not N8N_WEBHOOK_URL:
@@ -84,19 +71,14 @@ def call_n8n(brand: str, goal: str) -> Dict[str, Any]:
 
 
 # =====================================================
-# UI
+# UI HEADER
 # =====================================================
-st.set_page_config(
-    page_title="Madison Market Insight",
-    layout="wide",
-)
-
 st.title("Madison Market Insight Engine")
 st.caption("Public interface for my Assignment 4 AI workflow")
 
-# -----------------------------
+# =====================================================
 # ABOUT SECTION
-# -----------------------------
+# =====================================================
 with st.expander("About this tool", expanded=True):
     st.markdown(
         """
@@ -110,15 +92,15 @@ Transforms marketing + workforce signals into executive-ready insights.
 - Generates decision-ready recommendations
 
 **Who it's for**
-- founders
-- marketers
-- product teams
-- analysts
+- Founders  
+- Marketers  
+- Product teams  
+- Analysts  
 
 **Tech Stack**
 n8n · APIs · Data Processing · LLM · Streamlit
 
-**Author**
+**Author**  
 Gunashree Rajakumar  
 https://www.linkedin.com/in/rajakumargunashree/
 """
@@ -191,20 +173,23 @@ if run:
     else:
         st.warning("No report_text returned from workflow.")
 
-    # Optional sections
+    # Insights
     if isinstance(result.get("top_insights"), list):
         st.markdown("### Key Insights")
         for i, x in enumerate(result["top_insights"][:10], 1):
             st.markdown(f"{i}. {x}")
 
+    # Metadata Table
     if isinstance(result.get("metadata"), dict):
         st.markdown("### Analysis Summary")
         st.table(result["metadata"])
 
+    # Raw Items
     if isinstance(result.get("items"), list):
         st.markdown("### Supporting Items")
         st.json(result["items"][:25])
 
+    # Debug toggle
     with st.expander("Debug Response"):
         st.json(result)
 
@@ -212,4 +197,3 @@ if run:
 
 else:
     st.info("Enter inputs and click Run Analysis.")
-
