@@ -1,250 +1,169 @@
 import json
+import os
 from typing import Any, Dict, List, Optional, Union
 
-import pandas as pd
+import requests
 import streamlit as st
 
 JsonType = Union[Dict[str, Any], List[Any]]
 
 
 # -----------------------------
-# Helpers (robust for n8n output)
+# Config (env vars / secrets)
 # -----------------------------
-def load_json_bytes(file_bytes: bytes) -> JsonType:
-    return json.loads(file_bytes.decode("utf-8", errors="replace"))
+def get_config(key: str, default: Optional[str] = None) -> Optional[str]:
+    # Works on Streamlit Cloud (st.secrets) + local (env vars)
+    if key in st.secrets:
+        return str(st.secrets[key])
+    return os.getenv(key, default)
 
 
-def normalize_n8n_payload(raw: JsonType) -> Dict[str, Any]:
+N8N_WEBHOOK_URL = get_config("N8N_WEBHOOK_URL")
+N8N_HEADER_NAME = get_config("N8N_HEADER_NAME", "X-API-KEY")
+N8N_HEADER_VALUE = get_config("N8N_HEADER_VALUE")
+
+
+# -----------------------------
+# Helpers
+# -----------------------------
+def normalize_response(raw: JsonType) -> Dict[str, Any]:
     """
-    n8n output can be:
-    - dict
-    - list like [{"json": {...}}]
-    - list like [{"output": [...]}]  <-- your case
-    Normalize to a single dict (best-effort).
+    Normalize n8n response into a dict:
+    - dict -> dict
+    - list -> first dict item
     """
     if isinstance(raw, dict):
         return raw
-
-    if isinstance(raw, list) and raw:
-        first = raw[0]
-        if isinstance(first, dict):
-            # Prefer {"json": {...}} if present, else use dict directly
-            if "json" in first and isinstance(first["json"], dict):
-                return first["json"]
-            return first
-
+    if isinstance(raw, list) and raw and isinstance(raw[0], dict):
+        return raw[0]
     return {}
 
 
-def deep_get(obj: Any, path: List[Union[str, int]]) -> Optional[Any]:
-    cur = obj
-    for p in path:
-        if isinstance(p, int):
-            if isinstance(cur, list) and 0 <= p < len(cur):
-                cur = cur[p]
-            else:
-                return None
-        else:
-            if isinstance(cur, dict) and p in cur:
-                cur = cur[p]
-            else:
-                return None
-    return cur
+def safe_str(x: Any) -> str:
+    return x.strip() if isinstance(x, str) else ""
 
 
-def extract_metadata(payload: Dict[str, Any]) -> Dict[str, Any]:
-    md = payload.get("metadata")
-    if isinstance(md, dict):
-        return md
+def call_n8n(brand: str, goal: str) -> Dict[str, Any]:
+    if not N8N_WEBHOOK_URL:
+        raise RuntimeError("Missing N8N_WEBHOOK_URL. Set it in Streamlit secrets or environment variables.")
+    if not N8N_HEADER_VALUE:
+        raise RuntimeError("Missing N8N_HEADER_VALUE. Set it in Streamlit secrets or environment variables.")
 
-    # Sometimes nested under "json"
-    md2 = deep_get(payload, ["json", "metadata"])
-    if isinstance(md2, dict):
-        return md2
+    headers = {
+        "Content-Type": "application/json",
+        N8N_HEADER_NAME: N8N_HEADER_VALUE,
+    }
 
-    return {}
+    payload = {"brand": brand, "goal": goal}
 
-
-def extract_prompt(payload: Dict[str, Any]) -> str:
-    p = payload.get("prompt")
-    if isinstance(p, str) and p.strip():
-        return p.strip()
-
-    # Sometimes nested under "json"
-    p2 = deep_get(payload, ["json", "prompt"])
-    if isinstance(p2, str) and p2.strip():
-        return p2.strip()
-
-    return ""
-
-
-def extract_text(payload: Dict[str, Any]) -> str:
-    """
-    Extracts AI report text from common n8n / OpenAI / LangChain response shapes.
-
-    Handles your specific n8n shape:
-      {"output":[{"content":[{"type":"output_text","text":"..."}]}]}
-    """
-    # 1) Your n8n structure
-    out = payload.get("output")
-    if isinstance(out, list):
-        texts: List[str] = []
-        for msg in out:
-            if isinstance(msg, dict):
-                content = msg.get("content")
-                if isinstance(content, list):
-                    for c in content:
-                        if (
-                            isinstance(c, dict)
-                            and c.get("type") == "output_text"
-                            and isinstance(c.get("text"), str)
-                            and c.get("text").strip()
-                        ):
-                            texts.append(c["text"].strip())
-        if texts:
-            return "\n\n".join(texts)
-
-    # 2) Other common structures (string direct)
-    candidates = [
-        ["text"],
-        ["content"],
-        ["response"],
-        ["result"],
-        ["message", "content"],
-        ["choices", 0, "message", "content"],  # OpenAI chat completions
-        ["choices", 0, "text"],                # OpenAI completions
-        ["data", "text"],
-        ["data", "content"],
-        ["data", "output"],
-    ]
-
-    for path in candidates:
-        val = deep_get(payload, path)
-        if isinstance(val, str) and val.strip():
-            return val.strip()
-
-    # 3) Fallback: choose longest long string field
-    long_strings = [
-        v.strip()
-        for v in payload.values()
-        if isinstance(v, str) and len(v.strip()) > 200
-    ]
-    if long_strings:
-        return max(long_strings, key=len)
-
-    return ""
+    resp = requests.post(N8N_WEBHOOK_URL, headers=headers, json=payload, timeout=120)
+    # If n8n returns HTML or empty body, this will raise — which is good for debugging
+    resp.raise_for_status()
+    return normalize_response(resp.json())
 
 
 # -----------------------------
 # Streamlit UI
 # -----------------------------
-st.set_page_config(page_title="Madison Market Insight Engine", layout="wide")
+st.set_page_config(page_title="Madison Market Insight", layout="wide")
 
-st.title("Madison Market Insight Engine")
-st.caption("Public interface wrapper for your Assignment 4 n8n market intelligence workflow (Assignment 5)")
+st.title("Madison Market Insight")
+st.caption("A public UI wrapper for my Assignment 4 n8n Madison workflow (Assignment 5).")
 
 with st.expander("About this tool", expanded=True):
     st.markdown(
         """
-**One-sentence description:** AI-powered market + workforce intelligence from multi-source signals.
+**One-sentence description:** Turns marketing + talent signals into executive-ready insights for non-technical users.
 
-**What it does:** Ingests marketing content (HubSpot RSS + YouTube) and workforce demand (job roles + skills),
-then produces executive-ready insights: trends, value props, in-demand roles/skills, alignment analysis, skill gaps,
-and business recommendations.
+**What it does:** Sends your inputs to an n8n workflow that pulls market signals (ex: RSS + YouTube) and generates
+a structured insight report (trends, value props, role/skill implications, gaps, recommendations).
 
-**Who it’s for:** Non-technical stakeholders who want decision-ready insights without using n8n.
+**Who it’s for:** Marketing managers, brand managers, and stakeholders who need insights without using n8n.
 
-**Tech stack:** n8n (orchestration) + JavaScript (normalization/merge) + OpenAI model reasoning + Streamlit (UI)
+**Tech stack:** n8n + JavaScript + LLM + Streamlit
 
-**Built by:** Gunashree Rajakumar — Portfolio/Contact: https://www.linkedin.com/in/rajakumargunashree/
+**Built by:** Gunashree Rajakumar — https://www.linkedin.com/in/rajakumargunashree/
         """.strip()
     )
 
 st.divider()
 st.subheader("Inputs")
 
-col1, col2 = st.columns(2)
+col1, col2 = st.columns([1, 2])
 
 with col1:
-    uploaded = st.file_uploader(
-        "Upload your A4 output JSON (madison_job_dataai.json)",
-        type=["json"],
-        help="Upload the JSON written by your final node output (Read/Write Files from Disk2).",
+    brand = st.text_input(
+        "Brand / Company",
+        placeholder="Example: OpenAI",
+        help="Required. The brand you want insights about.",
     )
 
 with col2:
-    pasted = st.text_area(
-        "Or paste the JSON contents here",
-        height=200,
-        placeholder="Paste the contents of madison_job_dataai.json here",
+    goal = st.text_input(
+        "Goal",
+        placeholder="Example: Generate market + workforce insights",
+        help="Required. Tell the agent what you want the report to focus on.",
     )
 
-# Validation
-if not uploaded and not pasted.strip():
-    st.info("Upload your A4 output JSON file OR paste the JSON to view formatted insights.")
-    st.stop()
+# Basic validation
+brand_clean = safe_str(brand)
+goal_clean = safe_str(goal)
 
-# Load JSON
-try:
-    if uploaded:
-        raw = load_json_bytes(uploaded.getvalue())
-    else:
-        raw = json.loads(pasted)
-except Exception as e:
-    st.error(f"Invalid JSON: {e}")
-    st.stop()
-
-payload = normalize_n8n_payload(raw)
-
-# Detect workflow definition mistake
-if "nodes" in payload and "connections" in payload:
-    st.error(
-        "You uploaded the n8n WORKFLOW JSON (nodes + connections), not the A4 OUTPUT JSON.\n\n"
-        "For Assignment 5 Part 2, upload the AI output file produced by your workflow (e.g., madison_job_dataai.json)."
-    )
-    st.stop()
-
-# Extract
-metadata = extract_metadata(payload)
-prompt = extract_prompt(payload)
-report_text = extract_text(payload)
-
-# Optional debug (professional toggle)
-show_debug = st.checkbox("Show raw JSON (debug)", value=False)
-if show_debug:
-    st.json(payload)
+run = st.button("Run analysis", type="primary")
 
 st.divider()
 st.subheader("Outputs (Formatted)")
 
-left, right = st.columns([1, 2])
+if run:
+    if not brand_clean or not goal_clean:
+        st.error("Please fill in both **Brand** and **Goal** before running.")
+        st.stop()
 
-with left:
-    st.markdown("### Run Metadata")
-    if metadata:
-        st.dataframe(pd.DataFrame([metadata]), use_container_width=True)
+    with st.spinner("Running n8n workflow…"):
+        try:
+            result = call_n8n(brand_clean, goal_clean)
+        except requests.HTTPError as e:
+            st.error("n8n returned an HTTP error.")
+            st.code(str(e), language="text")
+            st.stop()
+        except Exception as e:
+            st.error("Could not run the workflow. Check webhook URL, auth header, and that the workflow is Active.")
+            st.code(str(e), language="text")
+            st.stop()
 
-        numeric = {k: v for k, v in metadata.items() if isinstance(v, (int, float))}
-        if numeric:
-            chart_df = pd.DataFrame({"metric": list(numeric.keys()), "value": list(numeric.values())})
-            st.bar_chart(chart_df.set_index("metric"))
-    else:
-        st.write("No metadata found in this output (okay).")
+    # Expected fields from your workflow
+    tool_name = safe_str(result.get("tool_name")) or "Madison Market Insight"
+    one_liner = safe_str(result.get("one_liner"))
+    report_text = safe_str(result.get("report_text"))
 
-    st.markdown("### Prompt (from A4 Input Builder)")
-    if prompt:
-        st.code(prompt[:2500] + ("\n...\n" if len(prompt) > 2500 else ""), language="text")
-    else:
-        st.write("Prompt not found in this output (depends on what n8n saved).")
+    top_insights = result.get("top_insights")
+    items = result.get("items")
 
-with right:
-    st.markdown("### Executive Insight Report")
+    st.markdown(f"### {tool_name}")
+    if one_liner:
+        st.info(one_liner)
+
+    # Main report
     if report_text:
+        st.markdown("### Executive Insight Report")
         st.markdown(report_text)
     else:
-        st.warning(
-            "Could not detect the AI report text.\n\n"
-            "This usually means the JSON structure is different than expected."
-        )
+        st.warning("No `report_text` found in the response. Make sure your final n8n node returns `report_text`.")
 
-st.success("✅ Your A4 workflow output is now accessible in a clean, non-technical interface.")
+    # Optional extras (only if present)
+    if isinstance(top_insights, list) and top_insights:
+        st.markdown("### Top Insights")
+        for i, x in enumerate(top_insights[:10], start=1):
+            st.markdown(f"{i}. {x}")
+
+    if isinstance(items, list) and items:
+        st.markdown("### Items")
+        st.json(items[:25])
+
+    # Debug toggle
+    with st.expander("Debug (raw response)"):
+        st.json(result)
+
+    st.success("✅ Your A4 workflow is now accessible to non-technical users through this UI.")
+else:
+    st.info("Enter inputs and click **Run analysis** to generate insights.")
