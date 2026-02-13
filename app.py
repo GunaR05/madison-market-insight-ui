@@ -7,15 +7,28 @@ import streamlit as st
 
 JsonType = Union[Dict[str, Any], List[Any]]
 
-
-# -----------------------------
-# Config (env vars / secrets)
-# -----------------------------
+# =====================================================
+# CONFIG LOADER (WORKS EVERYWHERE)
+# =====================================================
 def get_config(key: str, default: Optional[str] = None) -> Optional[str]:
-    # Works on Streamlit Cloud (st.secrets) + local (env vars)
-    if key in st.secrets:
-        return str(st.secrets[key])
-    return os.getenv(key, default)
+    """
+    Universal config loader:
+    1) Railway / Render / Docker → env vars
+    2) Streamlit Cloud → st.secrets
+    3) Local dev → .env or system env
+    """
+    value = os.getenv(key)
+
+    if value:
+        return value
+
+    try:
+        if key in st.secrets:
+            return str(st.secrets[key])
+    except Exception:
+        pass
+
+    return default
 
 
 N8N_WEBHOOK_URL = get_config("N8N_WEBHOOK_URL")
@@ -23,15 +36,11 @@ N8N_HEADER_NAME = get_config("N8N_HEADER_NAME", "X-API-KEY")
 N8N_HEADER_VALUE = get_config("N8N_HEADER_VALUE")
 
 
-# -----------------------------
-# Helpers
-# -----------------------------
+# =====================================================
+# HELPERS
+# =====================================================
 def normalize_response(raw: JsonType) -> Dict[str, Any]:
-    """
-    Normalize n8n response into a dict:
-    - dict -> dict
-    - list -> first dict item
-    """
+    """Normalize n8n response → dict"""
     if isinstance(raw, dict):
         return raw
     if isinstance(raw, list) and raw and isinstance(raw[0], dict):
@@ -43,127 +52,164 @@ def safe_str(x: Any) -> str:
     return x.strip() if isinstance(x, str) else ""
 
 
+# =====================================================
+# CALL WORKFLOW
+# =====================================================
 def call_n8n(brand: str, goal: str) -> Dict[str, Any]:
     if not N8N_WEBHOOK_URL:
-        raise RuntimeError("Missing N8N_WEBHOOK_URL. Set it in Streamlit secrets or environment variables.")
+        raise RuntimeError("Missing N8N_WEBHOOK_URL environment variable.")
+
     if not N8N_HEADER_VALUE:
-        raise RuntimeError("Missing N8N_HEADER_VALUE. Set it in Streamlit secrets or environment variables.")
+        raise RuntimeError("Missing N8N_HEADER_VALUE environment variable.")
 
     headers = {
         "Content-Type": "application/json",
         N8N_HEADER_NAME: N8N_HEADER_VALUE,
     }
 
-    payload = {"brand": brand, "goal": goal}
+    payload = {
+        "brand": brand,
+        "goal": goal,
+    }
 
-    resp = requests.post(N8N_WEBHOOK_URL, headers=headers, json=payload, timeout=120)
-    # If n8n returns HTML or empty body, this will raise — which is good for debugging
+    resp = requests.post(
+        N8N_WEBHOOK_URL,
+        headers=headers,
+        json=payload,
+        timeout=120,
+    )
+
     resp.raise_for_status()
     return normalize_response(resp.json())
 
 
-# -----------------------------
-# Streamlit UI
-# -----------------------------
-st.set_page_config(page_title="Madison Market Insight", layout="wide")
+# =====================================================
+# UI
+# =====================================================
+st.set_page_config(
+    page_title="Madison Market Insight",
+    layout="wide",
+)
 
-st.title("Madison Market Insight")
-st.caption("A public UI wrapper for my Assignment 4 n8n Madison workflow (Assignment 5).")
+st.title("Madison Market Insight Engine")
+st.caption("Public interface for my Assignment 4 AI workflow")
 
+# -----------------------------
+# ABOUT SECTION
+# -----------------------------
 with st.expander("About this tool", expanded=True):
     st.markdown(
         """
-**One-sentence description:** Turns marketing + talent signals into executive-ready insights for non-technical users.
+**One-sentence description**  
+Transforms marketing + workforce signals into executive-ready insights.
 
-**What it does:** Sends your inputs to an n8n workflow that pulls market signals (ex: RSS + YouTube) and generates
-a structured insight report (trends, value props, role/skill implications, gaps, recommendations).
+**What it does**
+- Fetches real market data
+- Analyzes hiring demand
+- Detects trends + skill gaps
+- Generates decision-ready recommendations
 
-**Who it’s for:** Marketing managers, brand managers, and stakeholders who need insights without using n8n.
+**Who it's for**
+- founders
+- marketers
+- product teams
+- analysts
 
-**Tech stack:** n8n + JavaScript + LLM + Streamlit
+**Tech Stack**
+n8n · APIs · Data Processing · LLM · Streamlit
 
-**Built by:** Gunashree Rajakumar — https://www.linkedin.com/in/rajakumargunashree/
-        """.strip()
+**Author**
+Gunashree Rajakumar  
+https://www.linkedin.com/in/rajakumargunashree/
+"""
     )
 
 st.divider()
 st.subheader("Inputs")
 
-col1, col2 = st.columns([1, 2])
+col1, col2 = st.columns(2)
 
 with col1:
     brand = st.text_input(
         "Brand / Company",
         placeholder="Example: OpenAI",
-        help="Required. The brand you want insights about.",
     )
 
 with col2:
     goal = st.text_input(
-        "Goal",
+        "Analysis Goal",
         placeholder="Example: Generate market + workforce insights",
-        help="Required. Tell the agent what you want the report to focus on.",
     )
 
-# Basic validation
 brand_clean = safe_str(brand)
 goal_clean = safe_str(goal)
 
-run = st.button("Run analysis", type="primary")
+run = st.button("Run Analysis", type="primary")
 
 st.divider()
-st.subheader("Outputs (Formatted)")
+st.subheader("Results")
 
+# =====================================================
+# EXECUTION
+# =====================================================
 if run:
+
     if not brand_clean or not goal_clean:
-        st.error("Please fill in both **Brand** and **Goal** before running.")
+        st.error("Please fill both inputs before running.")
         st.stop()
 
-    with st.spinner("Running n8n workflow…"):
+    with st.spinner("Fetching data → analyzing → generating insights..."):
+
         try:
             result = call_n8n(brand_clean, goal_clean)
+
         except requests.HTTPError as e:
-            st.error("n8n returned an HTTP error.")
-            st.code(str(e), language="text")
-            st.stop()
-        except Exception as e:
-            st.error("Could not run the workflow. Check webhook URL, auth header, and that the workflow is Active.")
-            st.code(str(e), language="text")
+            st.error("Workflow returned HTTP error")
+            st.code(str(e))
             st.stop()
 
-    # Expected fields from your workflow
+        except Exception as e:
+            st.error("Workflow failed. Check webhook + variables.")
+            st.code(str(e))
+            st.stop()
+
+    # =====================================================
+    # OUTPUT DISPLAY
+    # =====================================================
     tool_name = safe_str(result.get("tool_name")) or "Madison Market Insight"
     one_liner = safe_str(result.get("one_liner"))
     report_text = safe_str(result.get("report_text"))
 
-    top_insights = result.get("top_insights")
-    items = result.get("items")
+    st.markdown(f"## {tool_name}")
 
-    st.markdown(f"### {tool_name}")
     if one_liner:
         st.info(one_liner)
 
-    # Main report
     if report_text:
         st.markdown("### Executive Insight Report")
         st.markdown(report_text)
     else:
-        st.warning("No `report_text` found in the response. Make sure your final n8n node returns `report_text`.")
+        st.warning("No report_text returned from workflow.")
 
-    # Optional extras (only if present)
-    if isinstance(top_insights, list) and top_insights:
-        st.markdown("### Top Insights")
-        for i, x in enumerate(top_insights[:10], start=1):
+    # Optional sections
+    if isinstance(result.get("top_insights"), list):
+        st.markdown("### Key Insights")
+        for i, x in enumerate(result["top_insights"][:10], 1):
             st.markdown(f"{i}. {x}")
 
-    if isinstance(items, list) and items:
-        st.markdown("### Items")
-        st.json(items[:25])
+    if isinstance(result.get("metadata"), dict):
+        st.markdown("### Analysis Summary")
+        st.table(result["metadata"])
 
-    # Debug toggle
-    with st.expander("Debug (raw response)"):
+    if isinstance(result.get("items"), list):
+        st.markdown("### Supporting Items")
+        st.json(result["items"][:25])
+
+    with st.expander("Debug Response"):
         st.json(result)
 
-    st.success("✅ Your A4 workflow is now accessible to non-technical users through this UI.")
+    st.success("Workflow executed successfully.")
+
 else:
-    st.info("Enter inputs and click **Run analysis** to generate insights.")
+    st.info("Enter inputs and click Run Analysis.")
+
