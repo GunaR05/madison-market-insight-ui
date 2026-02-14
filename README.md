@@ -33,14 +33,6 @@ Given a brand and an analysis goal, the system:
 
 All results are formatted into a structured executive report.
 
----
-
-## Live Interface
-Public UI  
-https://web-production-46181.up.railway.app/
-
-Workflow Backend  
-https://cusped-stephen-alphamerically.ngrok-free.dev/workflow/ozDlrNtqWtzgvE1N
 
 ---
 
