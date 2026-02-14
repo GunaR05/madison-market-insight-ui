@@ -92,7 +92,7 @@ def call_n8n(brand: str, goal: str) -> Dict[str, Any]:
         return normalize_response(resp.json())
     except Exception:
         raise RuntimeError("Webhook did not return valid JSON.")
-    st.write("SENDING PAYLOAD:", payload)
+   
 
 
 
@@ -154,6 +154,15 @@ brand_clean = safe_str(brand)
 goal_clean = safe_str(goal)
 
 run = st.button("Run Analysis", type="primary")
+
+if run:
+    payload = {
+        "brand": brand_clean,
+        "goal": goal_clean,
+    }
+
+    st.write("SENDING PAYLOAD:", payload)  # ← MUST be here
+
 
 st.divider()
 st.subheader("Results")
