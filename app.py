@@ -1,14 +1,12 @@
 import streamlit as st
 
 # =====================================================
-# MUST BE FIRST STREAMLIT COMMAND
+# PAGE CONFIG (must be first)
 # =====================================================
 st.set_page_config(
     page_title="Madison Market Insight",
     layout="wide",
 )
-
-
 
 import os
 import requests
@@ -17,16 +15,14 @@ from typing import Any, Dict, List, Optional, Union
 JsonType = Union[Dict[str, Any], List[Any]]
 
 # =====================================================
-# UNIVERSAL CONFIG LOADER
-# Works on Railway + Render + Local + Streamlit Cloud
+# CONFIG LOADER
+# Works everywhere (Railway + Local + Streamlit Cloud)
 # =====================================================
 def get_config(key: str, default: Optional[str] = None) -> Optional[str]:
-    # 1) Environment variables (Railway / Render / Docker)
-    value = os.getenv(key)
-    if value:
-        return value
+    val = os.getenv(key)
+    if val:
+        return val
 
-    # 2) Streamlit secrets (Cloud)
     try:
         if key in st.secrets:
             return str(st.secrets[key])
@@ -40,8 +36,6 @@ N8N_WEBHOOK_URL = get_config("N8N_WEBHOOK_URL")
 N8N_HEADER_NAME = get_config("N8N_HEADER_NAME", "X-API-KEY")
 N8N_HEADER_VALUE = get_config("N8N_HEADER_VALUE")
 
-st.write("DEBUG URL:", N8N_WEBHOOK_URL)
-st.write("DEBUG HEADER:", N8N_HEADER_NAME, N8N_HEADER_VALUE)
 
 # =====================================================
 # HELPERS
@@ -59,21 +53,15 @@ def safe_str(x: Any) -> str:
 
 
 # =====================================================
-# CALL N8N WORKFLOW
+# CALL N8N
 # =====================================================
 def call_n8n(brand: str, goal: str) -> Dict[str, Any]:
 
     if not N8N_WEBHOOK_URL:
-        raise RuntimeError(
-            "Missing environment variable: N8N_WEBHOOK_URL\n"
-            "Set it in Railway → Variables."
-        )
+        raise RuntimeError("Missing N8N_WEBHOOK_URL environment variable.")
 
     if not N8N_HEADER_VALUE:
-        raise RuntimeError(
-            "Missing environment variable: N8N_HEADER_VALUE\n"
-            "Set it in Railway → Variables."
-        )
+        raise RuntimeError("Missing N8N_HEADER_VALUE environment variable.")
 
     headers = {
         "Content-Type": "application/json",
@@ -93,21 +81,19 @@ def call_n8n(brand: str, goal: str) -> Dict[str, Any]:
             timeout=120,
         )
     except requests.exceptions.RequestException as e:
-        raise RuntimeError(f"Network error calling webhook:\n{e}")
+        raise RuntimeError(f"Network error:\n{e}")
 
-    # Debug status
     if resp.status_code != 200:
         raise RuntimeError(
-            f"Webhook returned status {resp.status_code}\n\n{resp.text}"
+            f"Webhook returned {resp.status_code}\n\n{resp.text}"
         )
 
-    # Parse JSON safely
     try:
         return normalize_response(resp.json())
     except Exception:
-        raise RuntimeError(
-            "Webhook did not return JSON.\n\nResponse:\n" + resp.text
-        )
+        raise RuntimeError("Webhook did not return valid JSON.")
+    st.write("SENDING PAYLOAD:", payload)
+
 
 
 # =====================================================
@@ -116,8 +102,9 @@ def call_n8n(brand: str, goal: str) -> Dict[str, Any]:
 st.title("Madison Market Insight Engine")
 st.caption("Public interface for my Assignment 4 AI workflow")
 
+
 # =====================================================
-# ABOUT SECTION
+# ABOUT
 # =====================================================
 with st.expander("About this tool", expanded=True):
     st.markdown(
@@ -126,10 +113,10 @@ with st.expander("About this tool", expanded=True):
 Transforms marketing + workforce signals into executive-ready insights.
 
 **What it does**
-- Fetches real market data
-- Analyzes hiring demand
-- Detects trends + skill gaps
-- Generates decision-ready recommendations
+- Fetches real market data  
+- Analyzes hiring demand  
+- Detects trends + skill gaps  
+- Generates decision-ready recommendations  
 
 **Who it's for**
 - Founders  
@@ -138,7 +125,7 @@ Transforms marketing + workforce signals into executive-ready insights.
 - Analysts  
 
 **Tech Stack**
-n8n · APIs · Data Processing · LLM · Streamlit
+n8n · APIs · Data Processing · LLM · Streamlit  
 
 **Author**  
 Gunashree Rajakumar  
@@ -171,6 +158,7 @@ run = st.button("Run Analysis", type="primary")
 st.divider()
 st.subheader("Results")
 
+
 # =====================================================
 # EXECUTION
 # =====================================================
@@ -180,11 +168,10 @@ if run:
         st.error("Please fill both inputs before running.")
         st.stop()
 
-    with st.spinner("Fetching data → analyzing → generating insights..."):
+    with st.spinner("Running analysis..."):
 
         try:
             result = call_n8n(brand_clean, goal_clean)
-
         except Exception as e:
             st.error("Workflow failed")
             st.code(str(e))
@@ -208,23 +195,19 @@ if run:
     else:
         st.warning("No report_text returned from workflow.")
 
-    # Insights
     if isinstance(result.get("top_insights"), list):
         st.markdown("### Key Insights")
         for i, x in enumerate(result["top_insights"][:10], 1):
             st.markdown(f"{i}. {x}")
 
-    # Metadata
     if isinstance(result.get("metadata"), dict):
         st.markdown("### Analysis Summary")
         st.table(result["metadata"])
 
-    # Items
     if isinstance(result.get("items"), list):
         st.markdown("### Supporting Items")
         st.json(result["items"][:25])
 
-    # Debug Panel
     with st.expander("Debug Response"):
         st.json(result)
 
@@ -232,4 +215,3 @@ if run:
 
 else:
     st.info("Enter inputs and click Run Analysis.")
-
